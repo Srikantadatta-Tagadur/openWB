@@ -530,6 +530,48 @@ def turndevicerelais(nummer, zustand):
                 logDebug("2", "Fehler beim Ausschalten von Device " + str(nummer) + " Fehlermeldung: " + str(e))
 
 #pyt ende
+def turnDeviceOn(nummer, name, einverz, einschwelle):
+    if str(nummer) + "einverz" in DeviceCounters:
+        timesince = int(time.time()) - int(DeviceCounters[str(nummer) + "einverz"])
+        if (einverz < timesince):
+            logDebug("1", "Device: " + str(nummer) + " " + str(name) + " Einschaltverzögerung erreicht, schalte ein bei " + str(einschwelle))
+            turndevicerelais(nummer, 1)
+            del DeviceCounters[str(nummer) + "einverz"]
+        else:
+            logDebug("1",
+                     "Device: " + str(nummer) + " " + str(name) + " Einschaltverzögerung noch nicht erreicht. " + str(
+                         einverz) + " ist größer als " + str(timesince))
+    else:
+        DeviceCounters.update({str(nummer) + "einverz": time.time()})
+        logDebug("1", "Device: " + str(nummer) + " " + str(name) + " Einschaltverzögerung gestartet")
+
+def turnDeviceOff(nummer, name, ausverz, mineinschaltdauer, ausschwelle):
+    if str(nummer) + "ausverz" in DeviceCounters:
+        timesince = int(time.time()) - int(DeviceCounters[str(nummer) + "ausverz"])
+        if (ausverz < timesince):
+            if str(nummer) + "eintime" in DeviceCounters:
+                timestart = int(time.time()) - int(DeviceCounters[str(nummer) + "eintime"])
+                if (mineinschaltdauer < timestart):
+                    logDebug("1", "Device: " + str(nummer) + " " + str(
+                        name) + " Ausschaltverzögerung & Mindesteinschaltdauer erreicht, schalte aus bei " + str(
+                        ausschwelle))
+                    turndevicerelais(nummer, 0)
+                    del DeviceCounters[str(nummer) + "ausverz"]
+                else:
+                    logDebug("1", "Device: " + str(nummer) + " " + str(name) + " Ausschaltverzögerung erreicht, Mindesteinschaltdauer noch nicht erreicht, " + str(
+                        mineinschaltdauer) + " ist größer als " + str(timestart))
+            else:
+                logDebug("1", "Device: " + str(nummer) + " " + str(
+                    name) + " Mindesteinschaltdauer nicht bekannt, schalte aus")
+                turndevicerelais(nummer, 0)
+        else:
+            logDebug("1",
+                     "Device: " + str(nummer) + " " + str(name) + " Ausschaltverzögerung noch nicht erreicht. " + str(
+                         ausverz) + " ist größer als " + str(timesince))
+    else:
+        DeviceCounters.update({str(nummer) + "ausverz": time.time()})
+        logDebug("1", "Device: " + str(nummer) + " " + str(name) + " Ausschaltverzögerung gestartet")
+
 def conditions(nummer):
     try:
         speichersocbeforestop = int(config.get('smarthomedevices', 'device_speichersocbeforestop_'+str(nummer)))
@@ -552,30 +594,29 @@ def conditions(nummer):
             logDebug("0","Device: " + str(nummer) + " " + str(name) + " Maximale Einschaltdauer erreicht bereits abgeschaltet")
         return
 
+    # Lesen des Logikumkehr-Wertes für das gegebene Gerät aus der config-Datei
+    logikumkehr = int(config.get('smarthomedevices', 'device_logikumkehr_'+str(nummer)))
+
     if ( uberschuss > einschwelle):
         try:
             del DeviceCounters[str(nummer)+"ausverz"]
         except:
             pass
         logDebug("0","Device: " + str(nummer) + " " + str(config.get('smarthomedevices', 'device_name_'+str(nummer)))+ " Überschuss größer Einschaltschwelle")
-        if ( DeviceValues[str(nummer)+"relais"] == 0 ):
-            if  str(nummer)+"einverz" in DeviceCounters:
-                timesince = int(time.time()) - int(DeviceCounters[str(nummer)+"einverz"])
-                if ( einverz < timesince ):
-                    logDebug("1","Device: " + str(nummer) + " " + str(name)  + " Einschaltverzögerung erreicht, schalte ein bei " + str(einschwelle))
-                    turndevicerelais(nummer, 1)
-                    del DeviceCounters[str(nummer)+"einverz"]
-                else:
-                    logDebug("1","Device: " + str(nummer) + " " + str(name) + " Einschaltverzögerung noch nicht erreicht. " + str(einverz) + " ist größer als " + str(timesince))
-            else:
-                DeviceCounters.update( {str(nummer) + "einverz" : time.time()})
-                logDebug("1","Device: " + str(nummer) + " " + str(name) + " Einschaltverzögerung gestartet")
+
+        # Wenn das Relais 0 ist und wenn logikumkehr 1 ist (vom Benutzer ausgewählt),sollte das Gerät eingeschaltet werden,
+        # andernfalls sollte es ausgeschaltet werden.
+        if (DeviceValues[str(nummer)+"relais"] == 0 and logikumkehr == 0):
+            turnDeviceOn(nummer, name, einverz, einschwelle)
         else:
-            logDebug("0","Device: " + str(nummer) + " " + str(name)+ " Einschaltverzögerung erreicht, bereits eingeschaltet")
-            try:
-                del DeviceCounters[str(nummer)+"einverz"]
-            except:
-                pass
+            if (DeviceValues[str(nummer)+"relais"] == 1 and logikumkehr == 1):
+                turnDeviceOff(nummer, name, ausverz, mineinschaltdauer, ausschwelle)
+            else:
+                logDebug("0","Device: " + str(nummer) + " " + str(name)+ " Einschaltverzögerung erreicht, bereits eingeschaltet")
+                try:
+                    del DeviceCounters[str(nummer)+"einverz"]
+                except:
+                    pass
     else:
         try:
             del DeviceCounters[str(nummer)+"einverz"]
@@ -588,32 +629,17 @@ def conditions(nummer):
             else:
                 logDebug("0","Device: " + str(nummer) + " " + str(name)+ " SoC niedriger als Abschalt SoC, prüfe weitere Bedingungen")
             logDebug("0","Device: " + str(nummer) + " " + str(name)+ "Überschuss kleiner Ausschaltschwelle")
-            if ( DeviceValues[str(nummer)+"relais"] == 1 ):
-                if  str(nummer)+"ausverz" in DeviceCounters:
-                    timesince = int(time.time()) - int(DeviceCounters[str(nummer)+"ausverz"])
-                    if ( ausverz < timesince ):
-                        if  str(nummer)+"eintime" in DeviceCounters:
-                            timestart = int(time.time()) - int(DeviceCounters[str(nummer)+"eintime"])
-                            if ( mineinschaltdauer < timestart):
-                                logDebug("1","Device: " + str(nummer) + " " + str(name)  + " Ausschaltverzögerung & Mindesteinschaltdauer erreicht, schalte aus bei " + str(ausschwelle))
-                                turndevicerelais(nummer, 0)
-                                del DeviceCounters[str(nummer)+"ausverz"]
-                            else:
-                                logDebug("1","Device: " + str(nummer) + " " + str(name)  + " Ausschaltverzögerung erreicht, Mindesteinschaltdauer noch nicht erreicht, " + str(mineinschaltdauer) + " ist größer als " + str(timestart))
-                        else:
-                            logDebug("1","Device: " + str(nummer) + " " + str(name)+ " Mindesteinschaltdauer nicht bekannt, schalte aus")
-                            turndevicerelais(nummer, 0)
-                    else:
-                        logDebug("1","Device: " + str(nummer) + " " + str(name) + " Ausschaltverzögerung noch nicht erreicht. " + str(ausverz) + " ist größer als " + str(timesince))
-                else:
-                    DeviceCounters.update( {str(nummer) + "ausverz" : time.time()})
-                    logDebug("1","Device: " + str(nummer) + " " + str(name) + " Ausschaltverzögerung gestartet")
+            if (DeviceValues[str(nummer)+"relais"] == 1 and logikumkehr == 0):
+                turnDeviceOff(nummer, name, ausverz, mineinschaltdauer, ausschwelle)
             else:
-                logDebug("0","Device: " + str(nummer) + " " + str(name)+ " Ausschaltverzögerung erreicht, bereits ausgeschaltet")
-                try:
-                    del DeviceCounters[str(nummer)+"ausverz"]
-                except:
-                    pass
+                if (DeviceValues[str(nummer)+"relais"] == 0 and logikumkehr == 1):
+                    turnDeviceOn(nummer, name, einverz, einschwelle)
+                else:
+                    logDebug("0","Device: " + str(nummer) + " " + str(name)+ " Ausschaltverzögerung erreicht, bereits ausgeschaltet")
+                    try:
+                        del DeviceCounters[str(nummer)+"ausverz"]
+                    except:
+                        pass
         else:
             logDebug("0","Device: " + str(nummer) + " " + str(name) + " Überschuss kleiner als Einschaltschwelle und größer als Ausschaltschwelle")
             try:
